@@ -1,0 +1,237 @@
+---
+title: "Statistical Modelling and Inference - Seminar 4"
+author: "Sergio-Yersi Villegas Pelegrín"
+output:
+  html_notebook:
+    code_folding: hide
+    toc: yes
+    toc_depth: 3
+    number_sections: yes
+---
+```{r message=FALSE, warning=FALSE, include=FALSE, results='hide'}
+# We first load the required libraries in order to be able to run the code:
+library(ggraph) # Graphical package
+library(tidyverse)  # Data manipulation
+library(cluster) #Clustering
+library(factoextra) # Clustering algorithms & visualization
+library(gridExtra) # Multiple plotting with ggplot2
+library(mclust) # Mclust soft clustering
+library(plotly) # 3D plot
+library(dplyr) # Basic R package
+library(clustree) # Clustering trees
+```
+# Data
+We load the real business dataset from a large e-commerce company, with 93 features for 10,000 products. We remove the $id$ column from the dataset, since the index of each row uniquely identifies each product, too. Then, we scale the data in order have it correctly balanced.
+```{r}
+# We load the data that will be used
+PATH <- '~/Desktop/TERM 1/SMI/seminar4'
+product_features <- read_csv(file.path(PATH,"product_features.csv"))
+ids <- product_features$id
+product_features <- subset(product_features,select=-id)
+product_features_scaled = scale(product_features)
+product_features_scaled = as.data.frame(product_features_scaled)
+```
+# Hard clustering
+
+In order to know the optimal number of clusters to use, there are several methods to look for it. For all the upcoming methods we will try, we will set the maximum number of clusters to check equal to 10 for several reasons.First, because we want to decrease computational time it will take. Then, so we can check different methods and algorithms without having to work with a subset of the data. Lastly, because it may not make sense to group the samples in many different groups, therefore limiting the maximum number of clusters to 10.
+
+## Gap statistics
+First, we will first run a gap statistics and check for the resulting optimal value. This method compares the total within intra-cluster variation for different values of $k$, with their expected values under null reference distribution of the data. The estimate of the optimal clusters will be the value of $k$ that maximizes the gap statistic (that is, the one yielding the largest gap statistic). Therefore, the clustering structure is far away from the random uniform distribution of points. 
+
+Now, we will run the gap statistics using different algorithms for the kmeans and hence, see if the results have similarities or not. The three algorithms we will use are: Hartigan and Wong (by default), MacQueen and Lloyd. On one hand, the MacQueen algorithm works similar to Hartigan and Wong: it updates the centroids any time a point is moved and also, makes clever time-saving choices in checking for the closest cluster. On the other hand, the Lloyd algorithm is the first and simplest of all these clustering algorithms: firstly, randomly partitions the data into $k$ sets; then, computes the centroid of each set and assigns each point to the closest centroid and finally, repeats these steps until nothing changes or the maximum number of iterations is reached.
+
+Let's compute all algorithms and display our results:
+```{r, echo=FALSE, results='hide', warning=FALSE,message=FALSE}
+gap_stat <- clusGap(product_features_scaled, FUN = kmeans, nstart = 25,
+                    iter.max=20, K.max = 10, B = 15) 
+gap_stat_mcq <- clusGap(product_features_scaled, FUN = kmeans, nstart = 25,
+                    algorithm='MacQueen',iter.max=20, K.max = 10, B = 15) 
+gap_stat_llo <- clusGap(product_features_scaled, FUN = kmeans, nstart = 25,
+                    algorithm='Lloyd',iter.max=20, K.max = 10, B = 15) 
+```
+
+```{r}
+p1 <- fviz_gap_stat(gap_stat) + ggtitle("Hartigan and Wong")
+p2 <- fviz_gap_stat(gap_stat_mcq) + ggtitle("MacQueen")
+p3 <- fviz_gap_stat(gap_stat_llo) + ggtitle("Lloyd")
+
+grid.arrange(p1, p2, p3, nrow = 2)
+```
+
+We can see that the optimal number of clusters returned by the gap statistics function for Hartigan and Wong, MacQueen and Lloyd algorithm are, respectively, 7, 8 and 10. However, for Hartigan and Wong, the gap statistics increases after that, having another pick at $k=10$ and therefore, closer to the other solutions provided by MacQueen and Lloyd. Hence, we could conclude that, as per the gap statistics, the optimal number of clusters would have a value of $k=9$ (computing the mean of the three values). 
+
+## Elbow method
+We can also use the Elbow Method in order to try and find the optimal number of clusters, in which the sum of squares at each number of clusters is calculated and graphed. We are searching for a change of slope, from steep to shallow (just like an elbow looks) to determine the optimal number of clusters. This method is inexact, but still potentially helpful, so we will compute it, again trying the three algorithms we explained before, and obtain the following result:
+
+```{r, warning=FALSE}
+# function to compute total within-cluster sum of square 
+sum_of_squares <- function(k) {
+  kmeans(product_features_scaled, k, nstart = 10)$tot.withinss
+}
+sum_of_squares_mcq <- function(k) {
+  kmeans(product_features_scaled, k, nstart = 10, algorithm='MacQueen')$tot.withinss
+}
+sum_of_squares_llo <- function(k) {
+  kmeans(product_features_scaled, k, nstart = 10, algorithm='Lloyd')$tot.withinss
+}
+
+# Compute and plot sum_of_squares for k = 1 to k = 10
+k.values <- 1:10
+
+# extract sum_of_squares for 2-10 clusters
+sum_of_squares_values <- map_dbl(k.values, sum_of_squares)
+sum_of_squares_df <- data.frame(k=k.values, sum_of_squares= sum_of_squares_values)
+
+sum_of_squares_mcq_values <- map_dbl(k.values, sum_of_squares_mcq)
+sum_of_squares__mcq_df <- data.frame(k=k.values, sum_of_squares_mcq= sum_of_squares_mcq_values)
+
+sum_of_squares_llo_values <- map_dbl(k.values, sum_of_squares_llo)
+sum_of_squares_llo_df <- data.frame(k=k.values, sum_of_squares_llo= sum_of_squares_llo_values)
+```
+
+```{r}
+em1 <- ggplot(sum_of_squares_df, aes(x=k,y=sum_of_squares)) + 
+  geom_point() +
+  geom_line() +
+  xlab("Number of clusters K") +
+  ylab("Sum of squares") + 
+  ggtitle("Hartigan and Wong")
+
+em2 <- ggplot(sum_of_squares__mcq_df, aes(x=k,y=sum_of_squares_mcq)) + 
+  geom_point() +
+  geom_line() +
+  xlab("Number of clusters K") +
+  ylab("Sum of squares") + 
+  ggtitle("MacQueen")
+
+em3 <- ggplot(sum_of_squares_llo_df, aes(x=k,y=sum_of_squares_llo)) + 
+  geom_point() +
+  geom_line() +
+  xlab("Number of clusters K") +
+  ylab("Sum of squares") + 
+  ggtitle("Lloyd")
+
+grid.arrange(em1, em2, em3, nrow = 2)
+```
+
+As we said, this method is not an exact procedure to determine the optimal number of clusters and as we can see, there is not a clear change of slope anywhere in the graph. There may be two light slope changes, one around $k=3$ and another one around $k=9$, but non of them are totally conclusive. Hence, we will keep the obtained result with the gap statistics for the optimal number of clusters.
+
+## Clustering trees
+Finally, we will now use a different $R$ package, which doesn’t explicitly tell you the correct choice of optimal clusters, but it can be useful for exploring possible choices and also, it gives us a nice graphical explanation of how information goes from one cluster to another whenever there is a change in $k$. 
+
+The clustree $R$ package takes an alternative approach: it considers how samples change groupings as the number of clusters increases. Therefore, it is useful for showing which clusters are distinct and which are unstable. We will now display the result and explain what it actually means. In order to save computational time, we will only compute it with one clustering algorithm: since, as we said before, both MacQueen or Hartigan and Wong work in a more efficient way than LLoyd, we will choose one of them. So, since Hartigan and Wong had a peak in the optimal $k=9$ value we have finally chosen, we will use this algorithm.
+
+```{r, echo=FALSE, results='hide', warning=FALSE,message=FALSE}
+# Define a null vector which will be iteratively updated
+c_tree <- NULL
+
+# Update the null vector with the results for each kmeans,
+# where we will try until k=11
+for (k in 1:10){
+  c_tree[k] <- kmeans(product_features_scaled, k, nstart = 30)
+}
+
+# Get a dataframe with the information contained of all kmeans
+df <- data.frame(c_tree)
+
+# Add an specific name for each column
+colnames(df) <- seq(1:10)
+colnames(df) <- paste0("k",colnames(df))
+
+# Computes a Principal Component Analysis (PCA)
+# and stores the result, updating the dataframe
+df.pca <- prcomp(df, center = TRUE, scale. = FALSE)
+ind.coord <- df.pca$x
+ind.coord <- ind.coord[,1:2]
+df <- bind_cols(as.data.frame(df), as.data.frame(ind.coord))
+```
+
+```{r message=FALSE, warning=FALSE}
+# We plot the tree with the obtained results:
+# a visualisation for interrogating clusterings as resolution increases.
+clustree(df, prefix='k')
+```
+Firstly, point out that the legend of the figure is being cut off. Hence, we will add here the information missing from the legend. In this figure, the size of each node corresponds to the number of samples in each cluster (from 2000 to 8000 for each size), and the arrows are coloured according to the number of samples each cluster receives, as it can be seen in the legend. A separate set of arrows, the transparent ones, are called the incoming node proportion and they show how samples from one group end up in another group; that is, an indicator of cluster instability. The more transparent the arrow is, the lower the proportion of samples that change is. Furthermore, when a node has multiple incoming edges, the clustering tree is indicating that we over-clustered the data.
+
+Again, this method does not provide the optimal number of clusters, it just nicely displays how samples move as the clustering resolution increases and thus, it is a nice way to explore the data.
+
+## Plotting with optimal $k$
+
+After having used several methods to try and understand the clustering it can be done with our data, we choose an optimal number of clusters of value $k=9$. Therefore, we will now compute the corresponding kmeans algorithm and plot the results. Again, as we did for the clustering trees, we will use the Hartigan and Wong algorithm.
+
+Since a 2D-plot can be confusing and difficult to visually understand, we will use a 3D-plot instead. With the package $plotly$, we will display a 3D-graph where the axis will correspond to the 3 most important features, obtained through a PCA done in our data. 
+
+Here, we display the following obtained results:
+
+```{r, warning=FALSE}
+pc <- princomp(product_features_scaled, cor=TRUE, scores = TRUE)
+optimal_kmeans <- kmeans(product_features_scaled, centers = 9, nstart = 25)
+product_features_scaled$cluster <- as.factor(optimal_kmeans$cluster)
+```
+
+```{r, warning=FALSE}
+axx <- list(
+  title = "x; 1st PC"
+)
+axy <- list(
+  title = "y; 2nd PC"
+)
+axz <- list(
+  title = "z; 3rd PC"
+)
+x_ax=~pc$scores[,1]
+y_ax=~pc$scores[,2]
+z_ax=~pc$scores[,3]
+plot_3d <- plot_ly(product_features_scaled,x=x_ax, y=y_ax, z=z_ax,color=~cluster) %>%
+     add_markers(size=1.5)
+plot_3d <- plot_3d %>% layout(scene = list(xaxis=axx,yaxis=axy,zaxis=axz))
+#layout(title = '3D-plot for k=9', xaxis=list(title='1st PC'))
+plot_3d
+```
+
+# Soft clustering
+
+We load again the data, since we added the clusters column to our original data, to work with the correct data structure.
+```{r}
+product_features_soft_clust <- read_csv(file.path(PATH,"product_features.csv"))
+product_features_soft_clust <- subset(product_features_soft_clust,select=-id)
+product_features_soft_clust_scaled = scale(product_features_soft_clust)
+product_features_soft_clust_scaled = as.data.frame(product_features_soft_clust_scaled)
+pc2 <- princomp(product_features_soft_clust_scaled, cor=TRUE, scores = TRUE)
+```
+
+Now, we will now obtain an EM Gaussian Mixture Model (GMM) with the $Mclust$ built-in function of $R$. This function fits a GMM by an EM algorithm for different values of the number of clusters and different constraints on the covariance matrices of the Gaussian components. Then, the function chooses the best model, in which we have the type of GMM and the number of components, using the BIC criterion. Now, instead of choosing the optimal number of clusters (as we did in hard clustering), we want to choose the number of mixture components.
+
+Following, we compute the function and show the obtained results:
+```{r, echo=FALSE, results='hide', warning=FALSE,message=FALSE}
+soft_clust <- Mclust(product_features_soft_clust_scaled, G=1:10)
+```
+
+```{r}
+plot(soft_clust, what = "BIC", ylim = range(soft_clust$BIC[,-(1:2)], na.rm = TRUE),
+     legendArgs = list(x = "bottomleft"))
+```
+
+```{r}
+summary(soft_clust)
+```
+We can see that the model returns an optimal number of mixture components equals to 8, which is very similar to the optimal number of clusters obtained with hard clustering ($k=9$). Therefore, using this result, we run the soft clustering function with this unique value passed to G and finally, we again 3D plot the results, with the 3 axis being the first three principal components of the data, too.
+```{r, echo=FALSE, results='hide', warning=FALSE,message=FALSE}
+soft_clust_optimal <- Mclust(product_features_soft_clust_scaled, G=c(8), modelNames = c('VEV'))
+```
+
+```{r, warning=FALSE}
+
+x_ax2=~pc2$scores[,1]
+y_ax2=~pc2$scores[,2]
+z_ax2=~pc2$scores[,3]
+
+plot_3d_soft <- plot_ly(product_features_soft_clust_scaled,x=x_ax2, y=y_ax2,  
+                        z=z_ax2, color=as.character(soft_clust_optimal$classification)) %>%
+     add_markers(size=1.5)
+plot_3d_soft <- plot_3d_soft %>% layout(scene = list(xaxis=axx,yaxis=axy,zaxis=axz))
+#layout(title = '3D-plot for k=9', xaxis=list(title='1st PC'))
+plot_3d_soft
+```
+
+
